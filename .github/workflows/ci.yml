@@ -1,0 +1,139 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    name: Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version:
+          - "3.10"
+          - "3.11"
+          - "3.12"
+          - "3.13"
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install uv and Python
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          python-version: ${{ matrix.python-version }}
+          version: "0.11.30"
+          enable-cache: true
+      - name: Install test dependencies
+        run: uv sync --locked --no-default-groups --group test
+      - name: Run tests
+        run: uv run --locked --no-sync pytest tests
+
+  documentation:
+    name: Documentation
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install uv and Python
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          python-version: "3.13"
+          version: "0.11.30"
+          enable-cache: true
+      - name: Install documentation dependencies
+        run: uv sync --locked --no-default-groups --group docs
+      - name: Build documentation
+        run: uv run --locked --no-sync make docs SPHINXOPTS=-W
+
+  quality:
+    name: Ruff critical checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install uv and Python
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          python-version: "3.13"
+          version: "0.11.30"
+          enable-cache: true
+      - name: Install lint dependencies
+        run: uv sync --locked --no-default-groups --group lint
+      - name: Reject critical Python errors
+        run: >-
+          uv run --locked --no-sync ruff check
+          --isolated
+          --select E9,F63,F7,F82
+          nagiosplugin tests
+
+  security:
+    name: Security
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install uv and Python
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          python-version: "3.13"
+          version: "0.11.30"
+          enable-cache: true
+      - name: Install security tools
+        run: uv sync --locked --no-default-groups --group security
+      - name: Reject new Bandit findings
+        run: >-
+          uv run --locked --no-sync bandit
+          --configfile bandit.toml
+          --recursive nagiosplugin
+          --baseline .github/security/bandit-baseline.json
+      - name: Audit Python dependencies
+        run: uv run --locked --no-sync pip-audit --skip-editable
+
+  required:
+    name: Required
+    if: ${{ always() }}
+    needs:
+      - tests
+      - documentation
+      - quality
+      - security
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Verify required jobs
+        env:
+          DOCUMENTATION_RESULT: ${{ needs.documentation.result }}
+          QUALITY_RESULT: ${{ needs.quality.result }}
+          SECURITY_RESULT: ${{ needs.security.result }}
+          TESTS_RESULT: ${{ needs.tests.result }}
+        run: |
+          if [[ "$TESTS_RESULT" != "success" ||
+                "$DOCUMENTATION_RESULT" != "success" ||
+                "$QUALITY_RESULT" != "success" ||
+                "$SECURITY_RESULT" != "success" ]]; then
+            echo "One or more required CI jobs did not succeed."
+            exit 1
+          fi

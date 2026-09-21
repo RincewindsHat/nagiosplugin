@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Classes  to represent check outcomes.
+"""Classes to represent check outcomes.
 
 This module defines :class:`ServiceState` which is the abstract base class
 for check outcomes. The four states defined by the :term:`Nagios plugin API`
@@ -51,6 +51,9 @@ class Warn(ServiceState):
         return super(cls, Warn).__new__(cls, 1, 'warning')
 
 
+# According to the Nagios development guidelines, this should be Warning,
+# not Warn, but renaming the class would occlude the built-in Warning
+# exception class.
 Warn = Warn()
 
 
